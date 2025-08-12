@@ -359,8 +359,8 @@ if full_labels:
     st.caption("Cheios: " + ", ".join(full_labels))
 
 start_choice = label_to_time[start_choice_label]
-    visitor_name = st.text_input("Nome do visitante")
-    phone = st.text_input("Contacto (opcional)")
+visitor_name = st.text_input("Nome do visitante")
+phone = st.text_input("Contacto (opcional)")
 
     if st.button("Confirmar marcação", type="primary"):
         if not visitor_name.strip():
