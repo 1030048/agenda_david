@@ -8,7 +8,7 @@ from supabase import create_client, Client
 # ================================
 # Configuração geral
 # ================================
-APP_TITLE = "Agendamento de Visitas ao David"
+APP_TITLE = "Agendamento de Visitas"
 TIMEZONE = ZoneInfo("Europe/Lisbon")
 DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")  # senha para marcações
 ADMIN_PASSWORD = os.getenv("VISIT_APP_ADMIN_PASS", "gestao2025")  # senha para gestão
@@ -17,7 +17,7 @@ DEFAULT_DURATION = 30  # duração sugerida (minutos)
 
 # Janelas de visita
 WEEKDAY_WINDOWS = [(time(16, 30), time(19, 30))]
-WEEKEND_WINDOWS = [(time(11, 30), time(14, 0)), (time(16, 30), time(19, 30))]
+WEEKEND_WINDOWS = [(time(11, 0), time(14, 30)), (time(16, 0), time(19, 30))]
 
 # ================================
 # Utilidades de feriados (Portugal)
@@ -341,7 +341,7 @@ def admin_panel():
 
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗓️", layout="centered")
-    st.title("🗓️ Agendamento de Visitas ao David")
+    st.title("🗓️ Agendamento de Visitas")
     st.caption("Acesso restrito por senha partilhada entre família e amigos.")
 
     if not require_password():
