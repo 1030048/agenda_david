@@ -1,9 +1,9 @@
 import os
-import sqlite3
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+from supabase import create_client, Client
 
 # ================================
 # Configuração geral
@@ -11,7 +11,6 @@ import streamlit as st
 APP_TITLE = "Agendamento de Visitas"
 TIMEZONE = ZoneInfo("Europe/Lisbon")
 DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")  # Altera no Streamlit Cloud: Secrets → VISIT_APP_PASS
-DB_PATH = os.getenv("VISIT_APP_DB", "data/bookings.db")
 SLOT_STEP_MIN = 30  # granularidade base de slots (minutos)
 DEFAULT_DURATION = 30  # duração sugerida (minutos)
 
@@ -43,9 +42,6 @@ def _easter_date(year: int) -> date:
 
 
 def portugal_national_holidays(year: int) -> set[date]:
-    """Devolve conjunto de feriados nacionais (PT) para o ano dado.
-    Nota: Carnaval não é feriado nacional obrigatório; incluímos apenas nacionais.
-    """
     easter = _easter_date(year)
     good_friday = easter - timedelta(days=2)
     corpus_christi = easter + timedelta(days=60)
@@ -73,86 +69,75 @@ def get_holidays(years: list[int]) -> set[date]:
         hs |= portugal_national_holidays(y)
     return hs
 
-
 # ================================
-# Base de dados
+# Supabase (persistência)
 # ================================
-
-def ensure_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            visit_date DATE NOT NULL,
-            start_time TIME NOT NULL,
-            end_time TIME NOT NULL,
-            visitor_name TEXT NOT NULL,
-            phone TEXT,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    cur.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings(visit_date)"
-    )
-    conn.commit()
-    return conn
-
 
 @st.cache_resource(show_spinner=False)
-def get_conn():
-    # Nota: no Streamlit Cloud podem existir múltiplas threads.
-    # Usamos check_same_thread=False na conexão (ver ensure_db) e
-    # garantimos que devolvemos a mesma ligação por processo.
-    return ensure_db()
+def get_supabase() -> Client:
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
+    except Exception:
+        st.error("⚠️ Configura os *Secrets*: SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (ou ANON).")
+        st.stop()
+    if not url or not key:
+        st.error("⚠️ SUPABASE_URL/SUPABASE_*_KEY em falta nos *Secrets*.")
+        st.stop()
+    return create_client(url, key)
 
 
-def fetch_day_bookings(conn, d: date) -> list[dict]:
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, visit_date, start_time, end_time, visitor_name, phone, created_at FROM bookings WHERE visit_date = ? ORDER BY start_time",
-        (d.isoformat(),),
-    )
-    rows = cur.fetchall()
-    out = []
+def _parse_time(tval: str | time) -> time:
+    if isinstance(tval, time):
+        return tval
+    # Aceita "HH:MM" ou "HH:MM:SS[.ffffff]"
+    txt = str(tval)
+    if len(txt) >= 8:
+        txt = txt[:8]
+    fmt = "%H:%M:%S" if len(txt) == 8 else "%H:%M"
+    return datetime.strptime(txt, fmt).time()
+
+
+def fetch_day_bookings(sb: Client, d: date) -> list[dict]:
+    res = sb.table("bookings").select(
+        "id, visit_date, start_time, end_time, visitor_name, phone, created_at"
+    ).eq("visit_date", d.isoformat()).order("start_time").execute()
+    rows = res.data or []
+    out: list[dict] = []
     for r in rows:
         out.append(
             {
-                "id": r[0],
-                "visit_date": r[1] if isinstance(r[1], date) else date.fromisoformat(r[1]),
-                "start_time": r[2] if isinstance(r[2], str) else r[2],
-                "end_time": r[3] if isinstance(r[3], str) else r[3],
-                "visitor_name": r[4],
-                "phone": r[5],
-                "created_at": r[6],
+                "id": r["id"],
+                "visit_date": date.fromisoformat(r["visit_date"]),
+                "start_time": _parse_time(r["start_time"]),
+                "end_time": _parse_time(r["end_time"]),
+                "visitor_name": r["visitor_name"],
+                "phone": r.get("phone"),
+                "created_at": r.get("created_at"),
             }
         )
     return out
 
 
-def insert_booking(conn, d: date, start: time, end: time, name: str, phone: str | None):
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO bookings (visit_date, start_time, end_time, visitor_name, phone, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            d.isoformat(),
-            start.strftime("%H:%M"),
-            end.strftime("%H:%M"),
-            name.strip(),
-            (phone or "").strip(),
-            datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    conn.commit()
+def insert_booking(sb: Client, d: date, start: time, end: time, name: str, phone: str | None):
+    payload = {
+        "visit_date": d.isoformat(),
+        "start_time": start.strftime("%H:%M:%S"),
+        "end_time": end.strftime("%H:%M:%S"),
+        "visitor_name": name.strip(),
+        "phone": (phone or "").strip(),
+    }
+    try:
+        sb.table("bookings").insert(payload).execute()
+    except Exception as e:
+        msg = str(e).lower()
+        if "duplicate" in msg or "unique" in msg or "conflict" in msg:
+            raise ValueError("Horário acabou de ficar ocupado.") from e
+        raise
 
 
-def delete_booking(conn, booking_id: int):
-    cur = conn.cursor()
-    cur.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
-    conn.commit()
+def delete_booking(sb: Client, booking_id: int):
+    sb.table("bookings").delete().eq("id", booking_id).execute()
 
 
 # ================================
@@ -188,8 +173,8 @@ def overlaps(a_start: time, a_end: time, b_start: time, b_end: time) -> bool:
 
 def find_conflict(existing: list[dict], new_start: time, new_end: time) -> dict | None:
     for b in existing:
-        s = datetime.strptime(b["start_time"], "%H:%M").time() if isinstance(b["start_time"], str) else b["start_time"]
-        e = datetime.strptime(b["end_time"], "%H:%M").time() if isinstance(b["end_time"], str) else b["end_time"]
+        s = _parse_time(b["start_time"]) if isinstance(b["start_time"], str) else b["start_time"]
+        e = _parse_time(b["end_time"]) if isinstance(b["end_time"], str) else b["end_time"]
         if overlaps(new_start, new_end, s, e):
             return b
     return None
@@ -207,7 +192,7 @@ def require_password():
 
     st.markdown("""
     ### Acesso restrito
-    Introduz a **senha** partilhada com família/amigos para marcar visitas.
+    Introduz a **senha** partilhada com família e amigos para marcar visitas.
     """)
     pwd = st.text_input("Senha", type="password")
     if st.button("Entrar"):
@@ -221,7 +206,7 @@ def require_password():
 
 
 def booking_form():
-    conn = get_conn()
+    sb = get_supabase()
 
     today = datetime.now(TIMEZONE).date()
     years = [today.year - 1, today.year, today.year + 1]
@@ -236,12 +221,12 @@ def booking_form():
         st.info("Neste dia não há janelas de visita disponíveis.")
         return
 
-    day_bookings = fetch_day_bookings(conn, sel_date)
+    day_bookings = fetch_day_bookings(sb, sel_date)
 
     with st.expander("Ver marcações deste dia", expanded=False):
         if day_bookings:
             for b in day_bookings:
-                st.write(f"• {b['start_time']}–{b['end_time']}: {b['visitor_name']} ({b['phone'] or 's/ contacto'})")
+                st.write(f"• {b['start_time'].strftime('%H:%M')}–{b['end_time'].strftime('%H:%M')}: {b['visitor_name']} ({b['phone'] or 's/ contacto'})")
         else:
             st.write("Sem marcações ainda.")
 
@@ -283,11 +268,15 @@ def booking_form():
         s = datetime.strptime(start_choice, "%H:%M").time()
         e = (datetime.combine(sel_date, s) + timedelta(minutes=duration)).time()
         # Double-check de conflito (evitar corrida)
-        latest = fetch_day_bookings(conn, sel_date)
+        latest = fetch_day_bookings(sb, sel_date)
         if find_conflict(latest, s, e):
             st.error("Ups! Esse horário acabou de ficar ocupado. Escolhe outro, por favor.")
             st.rerun()
-        insert_booking(conn, sel_date, s, e, visitor_name, phone)
+        try:
+            insert_booking(sb, sel_date, s, e, visitor_name, phone)
+        except ValueError:
+            st.error("Ups! Esse horário acabou de ficar ocupado. Escolhe outro, por favor.")
+            st.rerun()
         st.success(f"Visita marcada para {sel_date.strftime('%d-%m-%Y')} das {s.strftime('%H:%M')} às {e.strftime('%H:%M')}.")
         st.balloons()
         st.rerun()
@@ -298,10 +287,10 @@ def admin_panel():
     if not st.checkbox("Mostrar painel de gestão"):
         return
 
-    conn = get_conn()
+    sb = get_supabase()
     today = datetime.now(TIMEZONE).date()
     sel_date = st.date_input("Escolher dia", value=today, key="admin_date")
-    rows = fetch_day_bookings(conn, sel_date)
+    rows = fetch_day_bookings(sb, sel_date)
 
     if not rows:
         st.info("Sem marcações neste dia.")
@@ -310,14 +299,14 @@ def admin_panel():
     for b in rows:
         cols = st.columns([3, 3, 4, 2])
         with cols[0]:
-            st.write(f"{b['start_time']}–{b['end_time']}")
+            st.write(f"{b['start_time'].strftime('%H:%M')}–{b['end_time'].strftime('%H:%M')}")
         with cols[1]:
-            st.write(b["visitor_name"]) 
+            st.write(b["visitor_name"])
         with cols[2]:
             st.write(b["phone"] or "—")
         with cols[3]:
             if st.button("Apagar", key=f"del_{b['id']}"):
-                delete_booking(conn, b["id"])
+                delete_booking(sb, b["id"])
                 st.success("Reserva apagada.")
                 st.rerun()
 
@@ -339,7 +328,7 @@ def main():
     admin_panel()
 
     st.divider()
-    st.caption("Dica: para alterar a senha, define o secret VISIT_APP_PASS. Para limpar dados, remove o ficheiro data/bookings.db.")
+    st.caption("Persistência via Supabase. Para configurar, define SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY nos Secrets.")
 
 
 if __name__ == "__main__":
