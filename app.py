@@ -80,7 +80,7 @@ def get_holidays(years: list[int]) -> set[date]:
 
 def ensure_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cur = conn.cursor()
     cur.execute(
         """
@@ -91,7 +91,7 @@ def ensure_db():
             end_time TIME NOT NULL,
             visitor_name TEXT NOT NULL,
             phone TEXT,
-            created_at TIMESTAMP NOT NULL
+            created_at TEXT NOT NULL
         )
         """
     )
@@ -143,7 +143,7 @@ def insert_booking(conn, d: date, start: time, end: time, name: str, phone: str 
             end.strftime("%H:%M"),
             name.strip(),
             (phone or "").strip(),
-            datetime.now(TIMEZONE).isoformat(timespec="seconds"),
+            datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
     conn.commit()
