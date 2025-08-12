@@ -176,7 +176,7 @@ def upsert_duty(sb: Client, d: date, period: str, name: str, phone: str):
     }
     try:
         sb.table("duty_contacts").upsert(payload, on_conflict="duty_date,period").execute()
-    except Exception as e:
+    except Exception:
         st.error("Não foi possível guardar o contacto do dia. Verifica se a tabela 'duty_contacts' existe e as permissões no Supabase.")
         raise
 
@@ -246,10 +246,12 @@ def require_password():
     if st.session_state.auth:
         return True
 
-    st.markdown("""
+    st.markdown(
+        """
     ### Acesso restrito
     Introduz a **senha** partilhada com família e amigos para marcar visitas.
-    """)
+    """
+    )
     pwd = st.text_input("Senha", type="password")
     if st.button("Entrar"):
         if pwd == DEFAULT_PASSWORD:
@@ -312,55 +314,56 @@ def booking_form():
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        duration = st.selectbox("Duração (min)", options=[15, 20, 30, 45, 60], index=[15,20,30,45,60].index(DEFAULT_DURATION))
+        duration = st.selectbox(
+            "Duração (min)", options=[15, 20, 30, 45, 60], index=[15, 20, 30, 45, 60].index(DEFAULT_DURATION)
+        )
     with c2:
         party_size = st.selectbox("Nº de pessoas", options=[1, 2], index=0)
     with c3:
         pass
 
     # Construir lista de horas de início possíveis, respeitando duração e capacidade
-    # Construir lista de horas de início possíveis, respeitando duração e capacidade
-option_pairs: list[tuple[str, str]] = []  # (label, value)
-full_labels: list[str] = []
-insufficient_labels: list[str] = []
-label_to_time: dict[str, str] = {}
-psize = int(party_size)
-for w_start, w_end in windows:
-    for s in generate_slots(w_start, w_end, SLOT_STEP_MIN):
-        end_candidate = (datetime.combine(sel_date, s) + timedelta(minutes=duration)).time()
-        if end_candidate <= w_end:
-            rem = capacity_remaining(day_bookings, s, end_candidate)
-            label = f"{s.strftime('%H:%M')} — {capacity_label(rem)}"
-            if rem >= psize and rem > 0:
-                option_pairs.append((label, s.strftime('%H:%M')))
-            elif rem == 0:
-                full_labels.append(label)
-            else:
-                insufficient_labels.append(label)
+    option_pairs: list[tuple[str, str]] = []  # (label, value)
+    full_labels: list[str] = []
+    insufficient_labels: list[str] = []
+    label_to_time: dict[str, str] = {}
+    psize = int(party_size)
+    for w_start, w_end in windows:
+        for s in generate_slots(w_start, w_end, SLOT_STEP_MIN):
+            end_candidate = (datetime.combine(sel_date, s) + timedelta(minutes=duration)).time()
+            if end_candidate <= w_end:
+                rem = capacity_remaining(day_bookings, s, end_candidate)
+                label = f"{s.strftime('%H:%M')} — {capacity_label(rem)}"
+                if rem >= psize and rem > 0:
+                    option_pairs.append((label, s.strftime('%H:%M')))
+                elif rem == 0:
+                    full_labels.append(label)
+                else:
+                    insufficient_labels.append(label)
 
-if not option_pairs:
-    st.warning("Não há horários livres para a duração e nº de pessoas escolhidos.")
-    st.caption("Dica: experimente reduzir a duração ou o nº de pessoas, ou escolher outro período.")
-    # Mostrar também slots cheios/insuficientes para contexto
+    if not option_pairs:
+        st.warning("Não há horários livres para a duração e nº de pessoas escolhidos.")
+        st.caption("Dica: experimente reduzir a duração ou o nº de pessoas, ou escolher outro período.")
+        # Mostrar também slots cheios/insuficientes para contexto
+        if insufficient_labels:
+            st.caption("Indisponíveis para a seleção atual: " + ", ".join(insufficient_labels))
+        if full_labels:
+            st.caption("Cheios: " + ", ".join(full_labels))
+        st.stop()
+
+    start_labels = [lbl for (lbl, _) in option_pairs]
+    for lbl, val in option_pairs:
+        label_to_time[lbl] = val
+    start_choice_label = st.selectbox("Hora de início", options=start_labels)
+    # Contexto adicional
     if insufficient_labels:
-        st.caption("Indisponíveis para a seleção atual: " + ", ".join(insufficient_labels))
+        st.caption(f"Indisponíveis para {psize} pessoa(s): " + ", ".join(insufficient_labels))
     if full_labels:
         st.caption("Cheios: " + ", ".join(full_labels))
-    st.stop()
 
-start_labels = [lbl for (lbl, _) in option_pairs]
-for lbl, val in option_pairs:
-    label_to_time[lbl] = val
-start_choice_label = st.selectbox("Hora de início", options=start_labels)
-# Contexto adicional
-if insufficient_labels:
-    st.caption(f"Indisponíveis para {psize} pessoa(s): " + ", ".join(insufficient_labels))
-if full_labels:
-    st.caption("Cheios: " + ", ".join(full_labels))
-
-start_choice = label_to_time[start_choice_label]
-visitor_name = st.text_input("Nome do visitante")
-phone = st.text_input("Contacto (opcional)")
+    start_choice = label_to_time[start_choice_label]
+    visitor_name = st.text_input("Nome do visitante")
+    phone = st.text_input("Contacto (opcional)")
 
     if st.button("Confirmar marcação", type="primary"):
         if not visitor_name.strip():
