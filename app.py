@@ -8,9 +8,10 @@ from supabase import create_client, Client
 # ================================
 # Configuração geral
 # ================================
-APP_TITLE = "Agendamento de Visitas"
+APP_TITLE = "Agendamento de Visitas ao David"
 TIMEZONE = ZoneInfo("Europe/Lisbon")
-DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")  # Altera no Streamlit Cloud: Secrets → VISIT_APP_PASS
+DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")  # senha para marcações
+ADMIN_PASSWORD = os.getenv("VISIT_APP_ADMIN_PASS", "gestao2025")  # senha para gestão
 SLOT_STEP_MIN = 30  # granularidade base de slots (minutos)
 DEFAULT_DURATION = 30  # duração sugerida (minutos)
 
@@ -283,9 +284,32 @@ def booking_form():
 
 
 def admin_panel():
-    st.subheader("Gestão de marcações (mesma senha)")
+    st.subheader("Gestão de marcações")
     if not st.checkbox("Mostrar painel de gestão"):
         return
+
+    # Autenticação específica de gestão
+    if "admin_auth" not in st.session_state:
+        st.session_state.admin_auth = False
+
+    if not st.session_state.admin_auth:
+        pwd = st.text_input("Senha de gestão", type="password", key="admin_pwd")
+        colg1, colg2 = st.columns([1, 3])
+        with colg1:
+            if st.button("Entrar (gestão)"):
+                if pwd == ADMIN_PASSWORD:
+                    st.session_state.admin_auth = True
+                    st.success("Acesso de gestão concedido.")
+                    st.rerun()
+                else:
+                    st.error("Senha de gestão incorreta.")
+        return
+
+    # Botão para terminar sessão de gestão
+    if st.button("Terminar sessão de gestão"):
+        st.session_state.admin_auth = False
+        st.info("Sessão de gestão terminada.")
+        st.rerun()
 
     sb = get_supabase()
     today = datetime.now(TIMEZONE).date()
@@ -328,7 +352,7 @@ def main():
     admin_panel()
 
     st.divider()
-    st.caption("Persistência via Supabase. Para configurar, define SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY nos Secrets.")
+    st.caption("Persistência via Supabase. Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY. Senhas: VISIT_APP_PASS (marcações) e VISIT_APP_ADMIN_PASS (gestão).")
 
 
 if __name__ == "__main__":
