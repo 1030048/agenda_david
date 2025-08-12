@@ -8,7 +8,7 @@ import streamlit as st
 # ================================
 # Configuração geral
 # ================================
-APP_TITLE = "Agendamento de Visitas - David"
+APP_TITLE = "Agendamento de Visitas"
 TIMEZONE = ZoneInfo("Europe/Lisbon")
 DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")  # Altera no Streamlit Cloud: Secrets → VISIT_APP_PASS
 DB_PATH = os.getenv("VISIT_APP_DB", "data/bookings.db")
@@ -80,7 +80,7 @@ def get_holidays(years: list[int]) -> set[date]:
 
 def ensure_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=False)
     cur = conn.cursor()
     cur.execute(
         """
@@ -104,6 +104,9 @@ def ensure_db():
 
 @st.cache_resource(show_spinner=False)
 def get_conn():
+    # Nota: no Streamlit Cloud podem existir múltiplas threads.
+    # Usamos check_same_thread=False na conexão (ver ensure_db) e
+    # garantimos que devolvemos a mesma ligação por processo.
     return ensure_db()
 
 
