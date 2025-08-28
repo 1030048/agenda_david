@@ -17,8 +17,8 @@ DEFAULT_DURATION = 30  # duração sugerida (minutos)
 PARTY_CAPACITY = 2  # capacidade total por slot/intervalo
 
 # Janelas de visita
-WEEKDAY_WINDOWS = [(time(16, 30), time(19, 30))]
-WEEKEND_WINDOWS = [(time(11, 0), time(14, 30)), (time(16, 0), time(19, 30))]
+WEEKDAY_WINDOWS = [(time(16, 30), time(21, 00))]
+WEEKEND_WINDOWS = []
 
 # ================================
 # Utilidades de feriados (Portugal)
@@ -190,8 +190,9 @@ def is_weekend(d: date) -> bool:
 
 
 def allowed_windows_for_date(d: date, holidays: set[date]) -> list[tuple[time, time]]:
+    # Novas regras: sem marcações ao fim de semana e feriados
     if is_weekend(d) or d in holidays:
-        return WEEKEND_WINDOWS
+        return []
     return WEEKDAY_WINDOWS
 
 
@@ -276,7 +277,7 @@ def booking_form():
     windows = allowed_windows_for_date(sel_date, holidays)
 
     if not windows:
-        st.info("Neste dia não há janelas de visita disponíveis.")
+        st.info("Neste dia não há janelas de visita disponíveis (sem marcações aos fins de semana e feriados).")
         return
 
     # Info de contacto do dia
