@@ -500,7 +500,7 @@ def main():
         st.markdown(f"**{LOCATION_TITLE}**")
         st.markdown(LOCATION_TEXT.replace("    ", "    "))
         if LOCATION_MAPS_URL:
-        st.markdown(f"[Ver no Google Maps]({LOCATION_MAPS_URL})")
+            st.markdown(f"[Ver no Google Maps]({LOCATION_MAPS_URL})")
 
 
     booking_form()
