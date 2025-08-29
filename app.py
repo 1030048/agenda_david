@@ -18,7 +18,7 @@ PARTY_CAPACITY = 2  # capacidade total por slot/intervalo
 
 # Janelas de visita
 WEEKDAY_WINDOWS = [(time(16, 30), time(21, 00))]
-WEEKEND_WINDOWS = []
+WEEKEND_WINDOWS = [(time(11, 00), time(21, 30))]
 
 # ================================
 # Utilidades de feriados (Portugal)
