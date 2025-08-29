@@ -190,9 +190,8 @@ def is_weekend(d: date) -> bool:
 
 
 def allowed_windows_for_date(d: date, holidays: set[date]) -> list[tuple[time, time]]:
-    # Novas regras: sem marcações ao fim de semana e feriados
     if is_weekend(d) or d in holidays:
-        return []
+        return WEEKEND_WINDOWS
     return WEEKDAY_WINDOWS
 
 
