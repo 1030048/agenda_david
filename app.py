@@ -476,6 +476,13 @@ def admin_panel():
                 st.rerun()
 
 
+# --- Localização ---
+LOCATION_TITLE = "Localização"
+LOCATION_TEXT = "Centro de Reabilitação do Norte \n Area de TCE - 2o piso - Sul - Cama 279"
+# Opcional: define VISIT_LOCATION_MAPS nos Secrets para mostrar link/botão do Google Maps
+LOCATION_MAPS_URL = os.getenv("VISIT_LOCATION_MAPS", "")
+
+
 # ================================
 # Main
 # ================================
@@ -487,6 +494,16 @@ def main():
 
     if not require_password():
         return
+
+    # Bloco de localização (após login)
+    with st.container(border=True):
+    st.markdown(f"**{LOCATION_TITLE}**")
+    st.markdown(LOCATION_TEXT.replace("
+    ", "
+    "))
+    if LOCATION_MAPS_URL:
+    st.markdown(f"[Ver no Google Maps]({LOCATION_MAPS_URL})")
+
 
     booking_form()
     st.divider()
