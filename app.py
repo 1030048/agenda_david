@@ -276,7 +276,7 @@ def booking_form():
     windows = allowed_windows_for_date(sel_date, holidays)
 
     if not windows:
-        st.info("Neste dia não há janelas de visita disponíveis (sem marcações aos fins de semana e feriados).")
+        st.info("Neste dia não há janelas de visita disponíveis.")
         return
 
     # Info de contacto do dia
