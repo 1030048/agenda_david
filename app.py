@@ -190,8 +190,10 @@ def is_weekend(d: date) -> bool:
 
 
 def allowed_windows_for_date(d: date, holidays: set[date]) -> list[tuple[time, time]]:
-    if is_weekend(d) or d in holidays:
-        return WEEKEND_WINDOWS
+    """Devolve janelas válidas: exclui sextas-feiras, fins de semana e feriados."""
+    # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+    if d.weekday() == 4 or d.weekday() >= 5 or d in holidays:
+        return []
     return WEEKDAY_WINDOWS
 
 
@@ -276,7 +278,7 @@ def booking_form():
     windows = allowed_windows_for_date(sel_date, holidays)
 
     if not windows:
-        st.info("Neste dia não há janelas de visita disponíveis.")
+        st.info("Neste dia não há janelas de visita disponíveis (sem marcações às sextas-feiras, fins de semana e feriados).")
         return
 
     # Info de contacto do dia
