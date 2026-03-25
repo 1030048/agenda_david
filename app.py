@@ -22,8 +22,7 @@ VISIT_BLOCKS = [
 
 # --- Localização ---
 LOCATION_TITLE = "Localização"
-LOCATION_TEXT = "Centro de Reabilitação do Norte
-Area de TCE - 2o piso - Sul - Cama 279"
+LOCATION_TEXT = "Centro de Reabilitação do Norte\n Area de TCE - 2o piso - Sul - Cama 279"
 LOCATION_MAPS_URL = os.getenv("VISIT_LOCATION_MAPS", "")
 
 # ================================
