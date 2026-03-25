@@ -8,24 +8,30 @@ from supabase import create_client, Client
 # ================================
 # Configuração geral
 # ================================
-APP_TITLE = "Agendamento de Visitas"
+APP_TITLE = "Agendamento de Visitas à Daniela"
 TIMEZONE = ZoneInfo("Europe/Lisbon")
-DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")  # senha para marcações
-ADMIN_PASSWORD = os.getenv("VISIT_APP_ADMIN_PASS", "gestao2025")  # senha para gestão
-SLOT_STEP_MIN = 30  # granularidade base de slots (minutos)
-DEFAULT_DURATION = 30  # duração sugerida (minutos)
-PARTY_CAPACITY = 2  # capacidade total por slot/intervalo
+DEFAULT_PASSWORD = os.getenv("VISIT_APP_PASS", "familia2025")
+ADMIN_PASSWORD = os.getenv("VISIT_APP_ADMIN_PASS", "gestao2025")
+PARTY_CAPACITY = 2
 
-# Janelas de visita
-WEEKDAY_WINDOWS = [(time(16, 30), time(21, 00))]
-WEEKEND_WINDOWS = [(time(11, 00), time(21, 30))]
+# Blocos fixos disponíveis todos os dias
+VISIT_BLOCKS = [
+    ("morning", "Manhã", time(11, 0), time(14, 30)),
+    ("afternoon", "Tarde", time(16, 0), time(19, 30)),
+]
+
+# --- Localização ---
+LOCATION_TITLE = "Localização"
+LOCATION_TEXT = "Hospital S. João Unidade de 
+Hemato-oncologia Piso 9 Cama 9301
+"
+LOCATION_MAPS_URL = os.getenv("VISIT_LOCATION_MAPS", "")
 
 # ================================
 # Utilidades de feriados (Portugal)
 # ================================
 
 def _easter_date(year: int) -> date:
-    """Computa a data da Páscoa (algoritmo de Meeus/Jones/Butcher)."""
     a = year % 19
     b = year // 100
     c = year % 100
@@ -47,21 +53,20 @@ def portugal_national_holidays(year: int) -> set[date]:
     easter = _easter_date(year)
     good_friday = easter - timedelta(days=2)
     corpus_christi = easter + timedelta(days=60)
-
-    fixed = {
-        date(year, 1, 1),   # Ano Novo
-        date(year, 4, 25),  # Liberdade
-        date(year, 5, 1),   # Dia do Trabalhador
-        date(year, 6, 10),  # Dia de Portugal
-        date(year, 8, 15),  # Assunção
-        date(year, 10, 5),  # Implantação da República
-        date(year, 11, 1),  # Dia de Todos os Santos
-        date(year, 12, 1),  # Restauração da Independência
-        date(year, 12, 8),  # Imaculada Conceição
-        date(year, 12, 25), # Natal
+    return {
+        date(year, 1, 1),
+        date(year, 4, 25),
+        date(year, 5, 1),
+        date(year, 6, 10),
+        date(year, 8, 15),
+        date(year, 10, 5),
+        date(year, 11, 1),
+        date(year, 12, 1),
+        date(year, 12, 8),
+        date(year, 12, 25),
+        good_friday,
+        corpus_christi,
     }
-    movable = {good_friday, corpus_christi}
-    return fixed | movable
 
 
 @st.cache_data(show_spinner=False)
@@ -71,8 +76,9 @@ def get_holidays(years: list[int]) -> set[date]:
         hs |= portugal_national_holidays(y)
     return hs
 
+
 # ================================
-# Supabase (persistência)
+# Supabase
 # ================================
 
 @st.cache_resource(show_spinner=False)
@@ -81,18 +87,19 @@ def get_supabase() -> Client:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
     except Exception:
-        st.error("⚠️ Configura os *Secrets*: SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (ou ANON).")
+        st.error("Configura os Secrets: SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (ou SUPABASE_ANON_KEY).")
         st.stop()
+
     if not url or not key:
-        st.error("⚠️ SUPABASE_URL/SUPABASE_*_KEY em falta nos *Secrets*.")
+        st.error("SUPABASE_URL ou SUPABASE key em falta nos Secrets.")
         st.stop()
+
     return create_client(url, key)
 
 
 def _parse_time(tval: str | time) -> time:
     if isinstance(tval, time):
         return tval
-    # Aceita "HH:MM" ou "HH:MM:SS[.ffffff]"
     txt = str(tval)
     if len(txt) >= 8:
         txt = txt[:8]
@@ -100,12 +107,18 @@ def _parse_time(tval: str | time) -> time:
     return datetime.strptime(txt, fmt).time()
 
 
-# -------- Bookings --------
+# ================================
+# Bookings
+# ================================
 
 def fetch_day_bookings(sb: Client, d: date) -> list[dict]:
-    res = sb.table("bookings").select(
-        "id, visit_date, start_time, end_time, visitor_name, phone, party_size, created_at"
-    ).eq("visit_date", d.isoformat()).order("start_time").execute()
+    res = (
+        sb.table("bookings")
+        .select("id, visit_date, start_time, end_time, visitor_name, phone, party_size, created_at")
+        .eq("visit_date", d.isoformat())
+        .order("start_time")
+        .execute()
+    )
     rows = res.data or []
     out: list[dict] = []
     for r in rows:
@@ -133,30 +146,29 @@ def insert_booking(sb: Client, d: date, start: time, end: time, name: str, phone
         "phone": (phone or "").strip(),
         "party_size": int(party_size),
     }
-    try:
-        sb.table("bookings").insert(payload).execute()
-    except Exception as e:
-        msg = str(e).lower()
-        if "duplicate" in msg or "unique" in msg or "conflict" in msg:
-            raise ValueError("Horário acabou de ficar ocupado.") from e
-        raise
+    sb.table("bookings").insert(payload).execute()
 
 
 def delete_booking(sb: Client, booking_id: int):
     sb.table("bookings").delete().eq("id", booking_id).execute()
 
 
-# -------- Duty contacts (contacto do dia) --------
+# ================================
+# Contacto do dia
+# ================================
 
 def fetch_duty_for_date(sb: Client, d: date) -> dict:
     try:
-        res = sb.table("duty_contacts").select(
-            "id, duty_date, period, contact_name, contact_phone, updated_at"
-        ).eq("duty_date", d.isoformat()).execute()
+        res = (
+            sb.table("duty_contacts")
+            .select("id, duty_date, period, contact_name, contact_phone, updated_at")
+            .eq("duty_date", d.isoformat())
+            .execute()
+        )
         data = res.data or []
     except Exception:
-        # Se a tabela não existir ou houver política a bloquear, devolve vazio (UI mostra mensagem por defeito)
         data = []
+
     duty = {"morning": None, "afternoon": None}
     for r in data:
         duty[r["period"]] = {
@@ -174,39 +186,12 @@ def upsert_duty(sb: Client, d: date, period: str, name: str, phone: str):
         "contact_name": name.strip(),
         "contact_phone": phone.strip(),
     }
-    try:
-        sb.table("duty_contacts").upsert(payload, on_conflict="duty_date,period").execute()
-    except Exception:
-        st.error("Não foi possível guardar o contacto do dia. Verifica se a tabela 'duty_contacts' existe e as permissões no Supabase.")
-        raise
+    sb.table("duty_contacts").upsert(payload, on_conflict="duty_date,period").execute()
 
 
 # ================================
-# Lógica de horários e capacidade
+# Regras de capacidade por bloco
 # ================================
-
-def is_weekend(d: date) -> bool:
-    return d.weekday() >= 5  # 5=Sat, 6=Sun
-
-
-def allowed_windows_for_date(d: date, holidays: set[date]) -> list[tuple[time, time]]:
-    """Devolve janelas válidas: exclui sextas-feiras, fins de semana e feriados."""
-    # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
-    if d.weekday() == 4 or d.weekday() >= 5 or d in holidays:
-        return []
-    return WEEKDAY_WINDOWS
-
-
-def generate_slots(start_t: time, end_t: time, step_min: int = SLOT_STEP_MIN) -> list[time]:
-    slots = []
-    tdt = datetime.combine(date.today(), start_t)
-    enddt = datetime.combine(date.today(), end_t)
-    delta = timedelta(minutes=step_min)
-    while tdt <= enddt - delta:
-        slots.append(tdt.time())
-        tdt += delta
-    return slots
-
 
 def overlaps(a_start: time, a_end: time, b_start: time, b_end: time) -> bool:
     return (datetime.combine(date.today(), a_start) < datetime.combine(date.today(), b_end)) and (
@@ -217,43 +202,31 @@ def overlaps(a_start: time, a_end: time, b_start: time, b_end: time) -> bool:
 def capacity_remaining(existing: list[dict], new_start: time, new_end: time) -> int:
     used = 0
     for b in existing:
-        s = b["start_time"] if isinstance(b["start_time"], time) else _parse_time(b["start_time"])
-        e = b["end_time"] if isinstance(b["end_time"], time) else _parse_time(b["end_time"])
-        if overlaps(new_start, new_end, s, e):
+        if overlaps(new_start, new_end, b["start_time"], b["end_time"]):
             used += int(b.get("party_size", 1))
-    rem = max(0, PARTY_CAPACITY - used)
-    return rem
+    return max(0, PARTY_CAPACITY - used)
 
 
 def capacity_label(rem: int) -> str:
     if rem <= 0:
         return "cheio"
-    elif rem == 1:
+    if rem == 1:
         return "1 lugar restante"
-    else:
-        return f"{rem} lugares restantes"
-
-
-def morning_applicable(d: date, holidays: set[date]) -> bool:
-    return is_weekend(d) or (d in holidays)
+    return "2 lugares restantes"
 
 
 # ================================
-# UI / App
+# UI
 # ================================
 
-def require_password():
+def require_password() -> bool:
     if "auth" not in st.session_state:
         st.session_state.auth = False
     if st.session_state.auth:
         return True
 
-    st.markdown(
-        """
-    ### Acesso restrito
-    Introduz a **senha** partilhada com família e amigos para marcar visitas.
-    """
-    )
+    st.markdown("### Acesso restrito")
+    st.write("Introduz a senha partilhada com família e amigos para marcar visitas.")
     pwd = st.text_input("Senha", type="password")
     if st.button("Entrar"):
         if pwd == DEFAULT_PASSWORD:
@@ -267,103 +240,73 @@ def require_password():
 
 def booking_form():
     sb = get_supabase()
-
     today = datetime.now(TIMEZONE).date()
-    years = [today.year - 1, today.year, today.year + 1]
-    holidays = get_holidays(years)
 
     st.header("Reservar visita")
-
     sel_date = st.date_input("Data da visita", value=today, min_value=today)
-    windows = allowed_windows_for_date(sel_date, holidays)
 
-    if not windows:
-        st.info("Neste dia não há janelas de visita disponíveis (sem marcações às sextas-feiras, fins de semana e feriados).")
-        return
-
-    # Info de contacto do dia
     duty = fetch_duty_for_date(sb, sel_date)
-    is_weekend_or_holiday = morning_applicable(sel_date, holidays)
-    if is_weekend_or_holiday:
-        morning_txt = (
-            f"**Manhã**: {duty['morning']['name']} — {duty['morning']['phone']}"
-            if duty.get("morning") and duty["morning"]
-            else "**Manhã**: Verificar mais perto da data a pessoa a contactar"
-        )
-    else:
-        morning_txt = ""
-    afternoon_txt = (
-        f"**Tarde**: {duty['afternoon']['name']} — {duty['afternoon']['phone']}"
-        if duty.get("afternoon") and duty["afternoon"]
-        else "**Tarde**: Verificar mais perto da data a pessoa a contactar"
-    )
     with st.container(border=True):
         st.markdown("**Contacto do dia**")
-        if morning_txt:
-            st.markdown(morning_txt)
-        st.markdown(afternoon_txt)
+        morning = duty.get("morning")
+        afternoon = duty.get("afternoon")
+        st.markdown(
+            f"**Manhã**: {morning['name']} — {morning['phone']}"
+            if morning else
+            "**Manhã**: Verificar mais perto da data a pessoa a contactar"
+        )
+        st.markdown(
+            f"**Tarde**: {afternoon['name']} — {afternoon['phone']}"
+            if afternoon else
+            "**Tarde**: Verificar mais perto da data a pessoa a contactar"
+        )
 
     day_bookings = fetch_day_bookings(sb, sel_date)
 
     with st.expander("Ver marcações deste dia", expanded=False):
         if day_bookings:
             for b in day_bookings:
+                period_label = "Manhã" if b["start_time"] == time(11, 0) else "Tarde"
                 st.write(
-                    f"• {b['start_time'].strftime('%H:%M')}–{b['end_time'].strftime('%H:%M')} | x{b['party_size']} — {b['visitor_name']} ({b['phone'] or 's/ contacto'})"
+                    f"• {period_label} ({b['start_time'].strftime('%H:%M')}–{b['end_time'].strftime('%H:%M')}) | x{b['party_size']} — {b['visitor_name']} ({b['phone'] or 's/ contacto'})"
                 )
         else:
             st.write("Sem marcações ainda.")
 
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
-        duration = st.selectbox(
-            "Duração (min)", options=[15, 20, 30, 45, 60], index=[15, 20, 30, 45, 60].index(DEFAULT_DURATION)
-        )
-    with c2:
-        party_size = st.selectbox("Nº de pessoas", options=[1, 2], index=0)
-    with c3:
-        pass
+    party_size = st.selectbox("Nº de pessoas", options=[1, 2], index=0)
+    psize = int(party_size)
 
-    # Construir lista de horas de início possíveis, respeitando duração e capacidade
-    option_pairs: list[tuple[str, str]] = []  # (label, value)
+    option_labels: list[str] = []
+    option_map: dict[str, tuple[str, time, time]] = {}
     full_labels: list[str] = []
     insufficient_labels: list[str] = []
-    label_to_time: dict[str, str] = {}
-    psize = int(party_size)
-    for w_start, w_end in windows:
-        for s in generate_slots(w_start, w_end, SLOT_STEP_MIN):
-            end_candidate = (datetime.combine(sel_date, s) + timedelta(minutes=duration)).time()
-            if end_candidate <= w_end:
-                rem = capacity_remaining(day_bookings, s, end_candidate)
-                label = f"{s.strftime('%H:%M')} — {capacity_label(rem)}"
-                if rem >= psize and rem > 0:
-                    option_pairs.append((label, s.strftime('%H:%M')))
-                elif rem == 0:
-                    full_labels.append(label)
-                else:
-                    insufficient_labels.append(label)
 
-    if not option_pairs:
-        st.warning("Não há horários livres para a duração e nº de pessoas escolhidos.")
-        st.caption("Dica: experimente reduzir a duração ou o nº de pessoas, ou escolher outro período.")
-        # Mostrar também slots cheios/insuficientes para contexto
+    for period_key, period_label, start_t, end_t in VISIT_BLOCKS:
+        rem = capacity_remaining(day_bookings, start_t, end_t)
+        label = f"{period_label} ({start_t.strftime('%H:%M')}–{end_t.strftime('%H:%M')}) — {capacity_label(rem)}"
+        if rem >= psize and rem > 0:
+            option_labels.append(label)
+            option_map[label] = (period_key, start_t, end_t)
+        elif rem == 0:
+            full_labels.append(label)
+        else:
+            insufficient_labels.append(label)
+
+    if not option_labels:
+        st.warning("Não há blocos disponíveis para o nº de pessoas escolhido.")
         if insufficient_labels:
             st.caption("Indisponíveis para a seleção atual: " + ", ".join(insufficient_labels))
         if full_labels:
             st.caption("Cheios: " + ", ".join(full_labels))
-        st.stop()
+        return
 
-    start_labels = [lbl for (lbl, _) in option_pairs]
-    for lbl, val in option_pairs:
-        label_to_time[lbl] = val
-    start_choice_label = st.selectbox("Hora de início", options=start_labels)
-    # Contexto adicional
+    selected_label = st.selectbox("Bloco de visita", options=option_labels)
     if insufficient_labels:
         st.caption(f"Indisponíveis para {psize} pessoa(s): " + ", ".join(insufficient_labels))
     if full_labels:
         st.caption("Cheios: " + ", ".join(full_labels))
 
-    start_choice = label_to_time[start_choice_label]
+    _, start_choice, end_choice = option_map[selected_label]
     visitor_name = st.text_input("Nome do visitante")
     phone = st.text_input("Contacto (opcional)")
 
@@ -371,20 +314,15 @@ def booking_form():
         if not visitor_name.strip():
             st.error("Indica o teu nome, por favor.")
             return
-        s = datetime.strptime(start_choice, "%H:%M").time()
-        e = (datetime.combine(sel_date, s) + timedelta(minutes=duration)).time()
-        # Double-check de capacidade (evitar corridas)
+
         latest = fetch_day_bookings(sb, sel_date)
-        if capacity_remaining(latest, s, e) < int(party_size):
-            st.error("Ups! Esse horário acabou de ficar cheio. Escolhe outro, por favor.")
+        if capacity_remaining(latest, start_choice, end_choice) < psize:
+            st.error("Ups! Esse bloco acabou de ficar cheio. Escolhe outro, por favor.")
             st.rerun()
-        try:
-            insert_booking(sb, sel_date, s, e, visitor_name, phone, int(party_size))
-        except ValueError:
-            st.error("Ups! Esse horário acabou de ficar ocupado. Escolhe outro, por favor.")
-            st.rerun()
+
+        insert_booking(sb, sel_date, start_choice, end_choice, visitor_name, phone, psize)
         st.success(
-            f"Visita marcada para {sel_date.strftime('%d-%m-%Y')} das {s.strftime('%H:%M')} às {e.strftime('%H:%M')} (x{party_size})."
+            f"Visita marcada para {sel_date.strftime('%d-%m-%Y')} no bloco {start_choice.strftime('%H:%M')}–{end_choice.strftime('%H:%M')} (x{psize})."
         )
         st.balloons()
         st.rerun()
@@ -395,24 +333,20 @@ def admin_panel():
     if not st.checkbox("Mostrar painel de gestão"):
         return
 
-    # Autenticação específica de gestão
     if "admin_auth" not in st.session_state:
         st.session_state.admin_auth = False
 
     if not st.session_state.admin_auth:
         pwd = st.text_input("Senha de gestão", type="password", key="admin_pwd")
-        colg1, colg2 = st.columns([1, 3])
-        with colg1:
-            if st.button("Entrar (gestão)"):
-                if pwd == ADMIN_PASSWORD:
-                    st.session_state.admin_auth = True
-                    st.success("Acesso de gestão concedido.")
-                    st.rerun()
-                else:
-                    st.error("Senha de gestão incorreta.")
+        if st.button("Entrar (gestão)"):
+            if pwd == ADMIN_PASSWORD:
+                st.session_state.admin_auth = True
+                st.success("Acesso de gestão concedido.")
+                st.rerun()
+            else:
+                st.error("Senha de gestão incorreta.")
         return
 
-    # Botão para terminar sessão de gestão
     if st.button("Terminar sessão de gestão"):
         st.session_state.admin_auth = False
         st.info("Sessão de gestão terminada.")
@@ -420,28 +354,21 @@ def admin_panel():
 
     sb = get_supabase()
     today = datetime.now(TIMEZONE).date()
-    years = [today.year - 1, today.year, today.year + 1]
-    holidays = get_holidays(years)
-
     sel_date = st.date_input("Escolher dia", value=today, key="admin_date")
 
-    # Gestão de contacto do dia
     st.markdown("### Contacto do dia")
     duty = fetch_duty_for_date(sb, sel_date)
-    is_weekend_or_holiday = morning_applicable(sel_date, holidays)
 
     colm, cola = st.columns(2)
     with colm:
         st.markdown("**Manhã**")
-        if is_weekend_or_holiday:
-            m_name = st.text_input("Nome (manhã)", value=(duty.get("morning") or {}).get("name", ""), key="m_name")
-            m_phone = st.text_input("Contacto (manhã)", value=(duty.get("morning") or {}).get("phone", ""), key="m_phone")
-            if st.button("Guardar manhã"):
-                upsert_duty(sb, sel_date, "morning", m_name, m_phone)
-                st.success("Contacto da manhã guardado.")
-                st.rerun()
-        else:
-            st.caption("(Não aplicável em dias úteis)")
+        m_name = st.text_input("Nome (manhã)", value=(duty.get("morning") or {}).get("name", ""), key="m_name")
+        m_phone = st.text_input("Contacto (manhã)", value=(duty.get("morning") or {}).get("phone", ""), key="m_phone")
+        if st.button("Guardar manhã"):
+            upsert_duty(sb, sel_date, "morning", m_name, m_phone)
+            st.success("Contacto da manhã guardado.")
+            st.rerun()
+
     with cola:
         st.markdown("**Tarde**")
         a_name = st.text_input("Nome (tarde)", value=(duty.get("afternoon") or {}).get("name", ""), key="a_name")
@@ -453,17 +380,16 @@ def admin_panel():
 
     st.divider()
 
-    # Lista e gestão de marcações
     rows = fetch_day_bookings(sb, sel_date)
-
     if not rows:
         st.info("Sem marcações neste dia.")
         return
 
     for b in rows:
-        cols = st.columns([3, 3, 3, 3, 2])
+        cols = st.columns([3, 3, 3, 2, 2])
         with cols[0]:
-            st.write(f"{b['start_time'].strftime('%H:%M')}–{b['end_time'].strftime('%H:%M')}")
+            period_label = "Manhã" if b["start_time"] == time(11, 0) else "Tarde"
+            st.write(f"{period_label} ({b['start_time'].strftime('%H:%M')}–{b['end_time'].strftime('%H:%M')})")
         with cols[1]:
             st.write(b["visitor_name"])
         with cols[2]:
@@ -477,32 +403,25 @@ def admin_panel():
                 st.rerun()
 
 
-# --- Localização ---
-LOCATION_TITLE = "Localização"
-LOCATION_TEXT = "Centro de Reabilitação do Norte \n Area de TCE - 2o piso - Sul - Cama 279"
-# Opcional: define VISIT_LOCATION_MAPS nos Secrets para mostrar link/botão do Google Maps
-LOCATION_MAPS_URL = os.getenv("VISIT_LOCATION_MAPS", "")
-
-
 # ================================
 # Main
 # ================================
 
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗓️", layout="centered")
-    st.title("🗓️ Agendamento de Visitas ao David")
+    st.title("🗓️ Agendamento de Visitas")
     st.caption("Acesso restrito por senha partilhada entre família e amigos.")
 
     if not require_password():
         return
 
-    # Bloco de localização (após login)
     with st.container(border=True):
         st.markdown(f"**{LOCATION_TITLE}**")
-        st.markdown(LOCATION_TEXT.replace("    ", "    "))
+        st.markdown(LOCATION_TEXT.replace("
+", "  
+"))
         if LOCATION_MAPS_URL:
             st.markdown(f"[Ver no Google Maps]({LOCATION_MAPS_URL})")
-
 
     booking_form()
     st.divider()
